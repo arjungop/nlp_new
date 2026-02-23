@@ -1,0 +1,10 @@
+pandas
+numpy
+torch
+transformers
+faiss-cpu
+seaborn
+matplotlib
+sentencepiece
+tiktoken 
+tqdm
