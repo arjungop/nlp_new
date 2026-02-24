@@ -73,3 +73,13 @@ class Config:
         os.path.dirname(os.path.abspath(__file__)), "outputs", "generation_checkpoint.json"
     )
     checkpoint_interval: int = 100
+
+    # Evaluation Checkpointing
+    evaluation_checkpoint_file: str = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "outputs", "evaluation_checkpoint.json"
+    )
+
+    # Embedding Checkpointing
+    embedding_checkpoint_file: str = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "outputs", "embedding_checkpoint.npz"
+    )

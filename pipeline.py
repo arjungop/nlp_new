@@ -105,7 +105,20 @@ def main() -> None:
         embedder = MuRILEmbedder(config)
 
         contexts = [str(t["anchor"]) for t in triplets if t["anchor"]]
-        context_embeddings = embedder.get_embeddings(contexts)
+
+        # Check for cached embeddings
+        if os.path.exists(config.embedding_checkpoint_file):
+            import numpy as np
+            logger.info("Loading cached embeddings from %s", config.embedding_checkpoint_file)
+            data = np.load(config.embedding_checkpoint_file)
+            context_embeddings = data["embeddings"]
+            print(f"Loaded cached embeddings ({context_embeddings.shape[0]} vectors).")
+        else:
+            context_embeddings = embedder.get_embeddings(contexts)
+            import numpy as np
+            os.makedirs(os.path.dirname(config.embedding_checkpoint_file), exist_ok=True)
+            np.savez_compressed(config.embedding_checkpoint_file, embeddings=context_embeddings)
+            logger.info("Saved embedding checkpoint to %s", config.embedding_checkpoint_file)
 
         print("Storing embeddings in FAISS Vector DB...")
         vector_db = VectorDBStore(config)

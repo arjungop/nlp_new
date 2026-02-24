@@ -3,14 +3,15 @@ Evaluation module for the Telugu Multi-Turn Dialogue Research Pipeline.
 
 This module provides the Evaluator class, which applies similarity metrics
 to compare generated responses against ground-truth positive responses.
-It handles the batch embedding of all texts using MuRIL and constructs a 
-comprehensive evaluation record for every dialogue turn across all models 
-and prompting strategies.
+Supports checkpointing for crash-safe resumability during long evaluation runs.
 """
 
+import os
+import json
 import logging
 from typing import List, Dict, Any, Optional, Set
 import numpy as np
+from tqdm import tqdm
 
 from config import Config
 from similarity_metrics import SimilarityMetrics
@@ -24,20 +25,11 @@ class Evaluator:
     Attributes:
         config: An instance of the Config dataclass containing pipeline settings.
         logger: A standard Python logger for tracking evaluation events.
-        metrics: An instance of SimilarityMetrics for computing string and vector similarities.
+        metrics: An instance of SimilarityMetrics for computing similarities.
         embedder: An instance of MuRILEmbedder for batch generating dense text vectors.
     """
 
     def __init__(self, config: Config) -> None:
-        """
-        Initializes the Evaluator, along with required metric calculators and embedders.
-
-        Args:
-            config: Configuration object defining model settings and parameters.
-
-        Raises:
-            RuntimeError: If embedder or metric classes fail to initialize.
-        """
         self.config = config
         self.logger = logging.getLogger(__name__)
         
@@ -54,36 +46,17 @@ class Evaluator:
         enriched_triplets: List[Dict[str, Optional[str]]]
     ) -> List[Dict[str, Any]]:
         """
-        Computes Cosine, Jaccard, Dice, and BERTScore similarities for all generated candidates.
-
-        To optimize processing time, this method extracts all unique strings
-        (both ground truth and generated candidates) and performs a single batch 
-        embedding run before computing pairwise similarities.
-
-        Args:
-            enriched_triplets: A list of dictionaries containing 'anchor', 'positive', 
-                               and the generated response keys ('t5_raw', 't5_cot', 
-                               'sarvam_raw', 'sarvam_cot').
-
-        Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing the original anchor,
-                                  positive text, candidate texts, and all computed metrics.
-
-        Raises:
-            TypeError: If the input dataset is not a list.
-            ValueError: If the input dataset is empty.
+        Computes Cosine, Jaccard, Dice, and BERTScore F1 for all generated candidates.
+        Saves checkpoint every 500 rows and resumes from last checkpoint on restart.
         """
         if not isinstance(enriched_triplets, list):
-            self.logger.error("Input dataset must be a list.")
             raise TypeError("Expected a list of enriched triplets.")
-
         if not enriched_triplets:
-            self.logger.error("Received empty list for evaluation.")
             raise ValueError("The input dataset cannot be empty.")
 
         self.logger.info("Starting evaluation for %d dialogue items.", len(enriched_triplets))
         
-        # Step 1: Collect all unique texts required for embedding
+        # Step 1: Collect all unique texts for embedding
         unique_texts: Set[str] = set()
         generation_keys = ["t5_raw", "t5_cot", "sarvam_raw"]
         
@@ -106,24 +79,47 @@ class Evaluator:
         try:
             embeddings = self.embedder.get_embeddings(text_list)
         except Exception as e:
-            self.logger.error("Failed to generate embeddings during evaluation: %s", str(e))
+            self.logger.error("Failed to generate embeddings: %s", str(e))
             raise RuntimeError("Batch embedding failed in the evaluator.") from e
 
-        # Map text back to its embedding vector
         text_to_embedding: Dict[str, np.ndarray] = {
             text: embeddings[i] for i, text in enumerate(text_list)
         }
 
-        # Step 3: Compute pairwise metrics
+        # Step 3: Load evaluation checkpoint if it exists
         evaluation_results: List[Dict[str, Any]] = []
+        start_index = 0
 
-        for index, row in enumerate(enriched_triplets):
+        if os.path.exists(self.config.evaluation_checkpoint_file):
+            try:
+                with open(self.config.evaluation_checkpoint_file, "r", encoding="utf-8") as f:
+                    evaluation_results = json.load(f)
+                start_index = len(evaluation_results)
+                self.logger.info(
+                    "Loaded evaluation checkpoint. Resuming from index %d of %d.",
+                    start_index, len(enriched_triplets)
+                )
+            except Exception as e:
+                self.logger.warning("Failed to load eval checkpoint: %s. Starting fresh.", str(e))
+                evaluation_results = []
+                start_index = 0
+
+        # Step 4: Compute pairwise metrics with checkpointing and tqdm
+        for index in tqdm(
+            range(start_index, len(enriched_triplets)),
+            desc="Evaluating Responses",
+            unit="row",
+            initial=start_index,
+            total=len(enriched_triplets)
+        ):
+            row = enriched_triplets[index]
             positive_text = row.get("positive")
             if not isinstance(positive_text, str) or not positive_text.strip():
-                self.logger.debug("Skipping row %d due to missing positive text.", index)
                 continue
 
-            positive_vector = text_to_embedding[positive_text]
+            positive_vector = text_to_embedding.get(positive_text)
+            if positive_vector is None:
+                continue
             
             row_eval: Dict[str, Any] = {
                 "anchor": row.get("anchor"),
@@ -132,17 +128,16 @@ class Evaluator:
 
             for key in generation_keys:
                 candidate_text = row.get(key)
-                
-                # Default scores if generation failed or is empty
                 cos_sim, jac_sim, dice_sim, bert_f1 = 0.0, 0.0, 0.0, 0.0
                 
                 if isinstance(candidate_text, str) and candidate_text.strip():
-                    candidate_vector = text_to_embedding[candidate_text]
+                    candidate_vector = text_to_embedding.get(candidate_text)
                     
                     try:
-                        cos_sim = self.metrics.compute_cosine_similarity(
-                            positive_vector, candidate_vector
-                        )
+                        if candidate_vector is not None:
+                            cos_sim = self.metrics.compute_cosine_similarity(
+                                positive_vector, candidate_vector
+                            )
                         jac_sim = self.metrics.compute_jaccard_similarity(
                             positive_text, candidate_text
                         )
@@ -165,6 +160,18 @@ class Evaluator:
                 row_eval[f"{key}_bert_f1"] = bert_f1
 
             evaluation_results.append(row_eval)
+
+            # Save checkpoint every 500 rows
+            if len(evaluation_results) % 500 == 0:
+                self.logger.info("Saving evaluation checkpoint at row %d...", len(evaluation_results))
+                os.makedirs(os.path.dirname(self.config.evaluation_checkpoint_file), exist_ok=True)
+                with open(self.config.evaluation_checkpoint_file, "w", encoding="utf-8") as f:
+                    json.dump(evaluation_results, f, ensure_ascii=False, indent=2)
+
+        # Final save
+        os.makedirs(os.path.dirname(self.config.evaluation_checkpoint_file), exist_ok=True)
+        with open(self.config.evaluation_checkpoint_file, "w", encoding="utf-8") as f:
+            json.dump(evaluation_results, f, ensure_ascii=False, indent=2)
 
         self.logger.info("Successfully evaluated %d dialogue rows.", len(evaluation_results))
         return evaluation_results
