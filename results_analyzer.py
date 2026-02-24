@@ -13,7 +13,7 @@ from config import Config
 
 
 _MODEL_PROMPT_COMBOS = ("t5_raw", "t5_cot", "sarvam_raw")
-_METRIC_NAMES = ("cosine", "jaccard", "dice")
+_METRIC_NAMES = ("cosine", "jaccard", "dice", "bert_f1")
 
 
 class ResultsAnalyzer:
@@ -48,7 +48,7 @@ class ResultsAnalyzer:
         Returns:
             A nested dictionary mapping each model-prompt key to a dictionary
             of metric names and their mean values. Structure:
-                { "t5_raw": {"cosine": 0.82, "jaccard": 0.31, "dice": 0.47}, ... }
+                { "t5_raw": {"cosine": 0.82, "jaccard": 0.31, "dice": 0.47, "bert_f1": 0.75}, ... }
 
         Raises:
             ValueError: If the results list is empty.
@@ -90,11 +90,12 @@ class ResultsAnalyzer:
         header = f"{'Model+Prompt':<20}"
         for metric in _METRIC_NAMES:
             header += f"{metric.capitalize():>12}"
-        print("\n" + "=" * 56)
+        table_width = 20 + 12 * len(_METRIC_NAMES)
+        print("\n" + "=" * table_width)
         print("  Performance Summary")
-        print("=" * 56)
+        print("=" * table_width)
         print(header)
-        print("-" * 56)
+        print("-" * table_width)
 
         for combo in _MODEL_PROMPT_COMBOS:
             scores = summary_matrix.get(combo, {})
@@ -104,4 +105,4 @@ class ResultsAnalyzer:
                 row += f"{value:>12.4f}"
             print(row)
 
-        print("=" * 56 + "\n")
+        print("=" * table_width + "\n")

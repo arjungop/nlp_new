@@ -54,7 +54,7 @@ class Evaluator:
         enriched_triplets: List[Dict[str, Optional[str]]]
     ) -> List[Dict[str, Any]]:
         """
-        Computes Cosine, Jaccard, and Dice similarities for all generated candidates.
+        Computes Cosine, Jaccard, Dice, and BERTScore similarities for all generated candidates.
 
         To optimize processing time, this method extracts all unique strings
         (both ground truth and generated candidates) and performs a single batch 
@@ -134,7 +134,7 @@ class Evaluator:
                 candidate_text = row.get(key)
                 
                 # Default scores if generation failed or is empty
-                cos_sim, jac_sim, dice_sim = 0.0, 0.0, 0.0
+                cos_sim, jac_sim, dice_sim, bert_f1 = 0.0, 0.0, 0.0, 0.0
                 
                 if isinstance(candidate_text, str) and candidate_text.strip():
                     candidate_vector = text_to_embedding[candidate_text]
@@ -149,6 +149,9 @@ class Evaluator:
                         dice_sim = self.metrics.compute_dice_similarity(
                             positive_text, candidate_text
                         )
+                        _, _, bert_f1 = self.metrics.compute_bert_score(
+                            positive_text, candidate_text
+                        )
                     except Exception as e:
                         self.logger.warning(
                             "Error computing metrics for row %d, key %s: %s", 
@@ -159,6 +162,7 @@ class Evaluator:
                 row_eval[f"{key}_cosine"] = cos_sim
                 row_eval[f"{key}_jaccard"] = jac_sim
                 row_eval[f"{key}_dice"] = dice_sim
+                row_eval[f"{key}_bert_f1"] = bert_f1
 
             evaluation_results.append(row_eval)
 

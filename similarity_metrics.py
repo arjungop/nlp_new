@@ -3,14 +3,16 @@ Similarity metrics module for the Telugu Multi-Turn Dialogue Research Pipeline.
 
 This module provides the SimilarityMetrics class, which calculates various
 similarity scores between generated responses and the ground-truth positive
-responses. It supports Cosine similarity for dense vectors (MuRIL embeddings)
-and Jaccard/Dice similarities for subword token sets.
+responses. It supports Cosine similarity for dense vectors (MuRIL embeddings),
+Jaccard/Dice similarities for subword token sets, and BERTScore for
+semantically-aware evaluation using contextual embeddings.
 """
 
 import logging
-from typing import Set
+from typing import Set, Tuple
 import numpy as np
 from transformers import AutoTokenizer
+from bert_score import score as bert_score_fn
 from config import Config
 
 
@@ -46,6 +48,53 @@ class SimilarityMetrics:
         except OSError as e:
             self.logger.error("Failed to load tokenizer for metric evaluation: %s", str(e))
             raise OSError(f"Could not load tokenizer {self.config.embedding_model_name}.") from e
+
+    def compute_bert_score(self, reference: str, candidate: str) -> Tuple[float, float, float]:
+        """
+        Computes BERTScore (Precision, Recall, F1) between a reference and candidate text.
+
+        BERTScore leverages contextual embeddings from a pretrained model to compute
+        token-level similarity, making it far more semantically meaningful than
+        surface-level overlap metrics like Jaccard or Dice. It uses MuRIL
+        (google/muril-base-cased) as the underlying model, which is specifically
+        designed for Indian languages including Telugu.
+
+        Args:
+            reference: The ground-truth reference text string.
+            candidate: The generated candidate text string.
+
+        Returns:
+            Tuple[float, float, float]: A tuple of (Precision, Recall, F1) scores,
+            each ranging from 0.0 to 1.0.
+
+        Raises:
+            TypeError: If either input is not a string.
+        """
+        if not isinstance(reference, str) or not isinstance(candidate, str):
+            self.logger.error("BERTScore inputs must be strings.")
+            raise TypeError("Expected strings for BERTScore computation.")
+
+        if not reference.strip() or not candidate.strip():
+            self.logger.warning("Empty input to BERTScore. Returning zeros.")
+            return 0.0, 0.0, 0.0
+
+        try:
+            precision, recall, f1 = bert_score_fn(
+                cands=[candidate],
+                refs=[reference],
+                model_type=self.config.embedding_model_name,
+                num_layers=12,
+                verbose=False,
+                device=None,  # auto-detect GPU/CPU
+            )
+            return (
+                float(precision[0].item()),
+                float(recall[0].item()),
+                float(f1[0].item()),
+            )
+        except Exception as e:
+            self.logger.warning("BERTScore computation failed: %s. Returning zeros.", str(e))
+            return 0.0, 0.0, 0.0
 
     def compute_cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
