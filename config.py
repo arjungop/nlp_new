@@ -27,11 +27,11 @@ class Config:
     )
     train_data_path: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "IndicDialogue Dataset", "dataset", "Splitted_Dataset", "train", "tel", "tel.jsonl"
+        "IndicDialogue Dataset", "dataset", "IndicDialogue", "Telugu", "Telugu.jsonl"
     )
     test_data_path: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "IndicDialogue Dataset", "dataset", "Splitted_Dataset", "test", "tel", "tel.jsonl"
+        "IndicDialogue Dataset", "dataset", "IndicDialogue", "Telugu", "Telugu.jsonl"
     )
 
     # Output directories
