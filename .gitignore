@@ -18,8 +18,18 @@ outputs/
 logs/
 vector_db/
 
-# Dataset (too large for GitHub)
+# Dataset (too large for GitHub - only Telugu split included)
 IndicDialogue Dataset/
+# Exception: include only the two Telugu JSONL files needed to run the pipeline
+!IndicDialogue Dataset/dataset/Splitted_Dataset/train/tel/tel.jsonl
+!IndicDialogue Dataset/dataset/Splitted_Dataset/test/tel/tel.jsonl
+!IndicDialogue Dataset/
+!IndicDialogue Dataset/dataset/
+!IndicDialogue Dataset/dataset/Splitted_Dataset/
+!IndicDialogue Dataset/dataset/Splitted_Dataset/train/
+!IndicDialogue Dataset/dataset/Splitted_Dataset/train/tel/
+!IndicDialogue Dataset/dataset/Splitted_Dataset/test/
+!IndicDialogue Dataset/dataset/Splitted_Dataset/test/tel/
 
 # OS files
 .DS_Store
