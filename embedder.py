@@ -12,6 +12,7 @@ from typing import List
 
 import numpy as np
 import torch
+from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel
 
 from config import Config
@@ -115,7 +116,13 @@ class MuRILEmbedder:
             "Embedding %d texts in batches of %d.", len(texts), batch_size
         )
 
-        for start in range(0, len(texts), batch_size):
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        for start in tqdm(
+            range(0, len(texts), batch_size),
+            total=total_batches,
+            desc="Embedding",
+            unit="batch",
+        ):
             batch = texts[start : start + batch_size]
             batch_embeddings = self._embed_batch(batch)
             all_embeddings.append(batch_embeddings)
