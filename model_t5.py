@@ -6,12 +6,11 @@ interface compatibility), which wraps a Gemma causal language model via
 HuggingFace transformers. Handles prompt encoding, autoregressive generation,
 and decoding of output tokens into Telugu text.
 
-Optimized for RTX6000 Ada (Ada Lovelace, sm_89, 48GB VRAM):
-  - bfloat16: Ada's BF16 tensor cores are faster and more numerically stable
-    than float16 for autoregressive generation at this scale.
-  - attn_implementation="sdpa": Uses PyTorch 2.0+ scaled_dot_product_attention,
-    which dispatches to Flash Attention kernel on Ada without requiring the
-    separate flash-attn package. Reduces attention memory from O(n^2) to O(n).
+Optimized for RTX A6000 (Ampere, sm_86, 48GB VRAM):
+  - float16: Ampere tensor cores peak throughput is with FP16, not BF16.
+  - attn_implementation="sdpa": PyTorch 2.0+ scaled_dot_product_attention
+    dispatches to an efficient fused kernel on Ampere, reducing attention
+    memory overhead without requiring the flash-attn package.
 
 Supports CUDA, Apple Silicon MPS, and CPU compute backends.
 """
@@ -75,10 +74,10 @@ class IndicT5Model:
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.config.t5_model_name)
 
-            # RTX6000 Ada: use bfloat16 on CUDA (Ada Lovelace BF16 tensor cores)
-            # and SDPA attention (PyTorch 2.0+ Flash Attention kernel, no extra package)
+            # RTX A6000 Ampere: float16 is optimal (Ampere tensor cores peak at FP16)
+            # SDPA uses PyTorch 2.0+ fused kernel on sm_86 — no flash-attn package needed
             if self.device.type == "cuda":
-                dtype = torch.bfloat16
+                dtype = torch.float16
                 attn_impl = "sdpa"
             elif self.device.type == "cpu":
                 dtype = torch.float32
