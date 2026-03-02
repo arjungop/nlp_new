@@ -6,6 +6,7 @@ faiss-cpu
 seaborn
 matplotlib
 sentencepiece
+protobuf
 tiktoken
 tqdm
 bert-score
