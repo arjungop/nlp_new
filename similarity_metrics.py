@@ -11,6 +11,7 @@ semantically-aware evaluation using contextual embeddings.
 import logging
 from typing import Set, Tuple
 import numpy as np
+import torch
 from transformers import AutoTokenizer
 from bert_score import score as bert_score_fn
 from config import Config
@@ -79,13 +80,15 @@ class SimilarityMetrics:
             return 0.0, 0.0, 0.0
 
         try:
+            # Explicitly pass CUDA device so BERTScore uses the RTX6000 Ada GPU
+            bert_device = "cuda" if torch.cuda.is_available() else "cpu"
             precision, recall, f1 = bert_score_fn(
                 cands=[candidate],
                 refs=[reference],
                 model_type=self.config.embedding_model_name,
                 num_layers=12,
                 verbose=False,
-                device=None,  # auto-detect GPU/CPU
+                device=bert_device,
             )
             return (
                 float(precision[0].item()),

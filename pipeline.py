@@ -9,6 +9,7 @@ and final visualization.
 
 import os
 import sys
+import random
 import logging
 from typing import List, Dict, Optional
 
@@ -99,6 +100,29 @@ def main() -> None:
         print("Building Anchor-Positive triplets...")
         builder = TripletBuilder(config)
         triplets = builder.build_triplets(dialogue_pairs)
+
+        # Stratified sampling — cap at config.max_samples for speed/cost
+        # Pairs are grouped by movie sequentially; we interleave by taking
+        # every Nth triplet so all movies stay represented, then shuffle.
+        if config.max_samples > 0 and len(triplets) > config.max_samples:
+            rng = random.Random(42)   # Fixed seed for reproducibility
+            # Step 1: interleave — take every Nth to cover all movies evenly
+            step = len(triplets) // config.max_samples
+            candidates = triplets[::step]
+            # Step 2: trim and shuffle for randomness within coverage
+            candidates = candidates[:config.max_samples]
+            rng.shuffle(candidates)
+            triplets = candidates
+            print(
+                f"Sampled {len(triplets):,} triplets from original "
+                f"{len(dialogue_pairs):,} (stratified, seed=42)."
+            )
+            logger.info(
+                "Triplets downsampled to %d from %d (step=%d, seed=42).",
+                len(triplets), len(dialogue_pairs), step
+            )
+        else:
+            print(f"Using all {len(triplets):,} triplets.")
 
         # Embedding and Vector Database Storage
         print("Embedding ground-truth contexts using MuRIL...")

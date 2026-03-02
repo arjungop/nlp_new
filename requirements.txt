@@ -6,6 +6,7 @@ faiss-cpu
 seaborn
 matplotlib
 sentencepiece
-tiktoken 
+tiktoken
 tqdm
 bert-score
+accelerate

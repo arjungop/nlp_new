@@ -6,6 +6,13 @@ interface compatibility), which wraps a Gemma causal language model via
 HuggingFace transformers. Handles prompt encoding, autoregressive generation,
 and decoding of output tokens into Telugu text.
 
+Optimized for RTX6000 Ada (Ada Lovelace, sm_89, 48GB VRAM):
+  - bfloat16: Ada's BF16 tensor cores are faster and more numerically stable
+    than float16 for autoregressive generation at this scale.
+  - attn_implementation="sdpa": Uses PyTorch 2.0+ scaled_dot_product_attention,
+    which dispatches to Flash Attention kernel on Ada without requiring the
+    separate flash-attn package. Reduces attention memory from O(n^2) to O(n).
+
 Supports CUDA, Apple Silicon MPS, and CPU compute backends.
 """
 
@@ -67,9 +74,23 @@ class IndicT5Model:
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.config.t5_model_name)
+
+            # RTX6000 Ada: use bfloat16 on CUDA (Ada Lovelace BF16 tensor cores)
+            # and SDPA attention (PyTorch 2.0+ Flash Attention kernel, no extra package)
+            if self.device.type == "cuda":
+                dtype = torch.bfloat16
+                attn_impl = "sdpa"
+            elif self.device.type == "cpu":
+                dtype = torch.float32
+                attn_impl = "eager"
+            else:  # MPS
+                dtype = torch.float16
+                attn_impl = "eager"
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.config.t5_model_name,
-                torch_dtype=torch.float32 if self.device.type == "cpu" else torch.float16,
+                torch_dtype=dtype,
+                attn_implementation=attn_impl,
             )
             self.model.to(self.device)
             self.model.eval()
@@ -128,16 +149,21 @@ class IndicT5Model:
                 attention_mask = encoded_input["attention_mask"].to(self.device)
                 input_length = input_ids.shape[1]
 
-                output_ids = self.model.generate(
+                # Greedy decoding when num_beams=1 (fastest); sampling when num_beams>1
+                use_sampling = self.config.num_beams > 1
+                generate_kwargs = dict(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=self.config.max_length,
                     num_beams=self.config.num_beams,
-                    temperature=self.config.temperature,
-                    top_p=self.config.top_p,
-                    do_sample=True,
+                    do_sample=use_sampling,
                     pad_token_id=self.tokenizer.pad_token_id,
                 )
+                if use_sampling:
+                    generate_kwargs["temperature"] = self.config.temperature
+                    generate_kwargs["top_p"] = self.config.top_p
+
+                output_ids = self.model.generate(**generate_kwargs)
 
                 responses: list[str] = []
                 for i in range(len(prompts)):

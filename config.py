@@ -53,7 +53,7 @@ class Config:
 
     # Embedding model (MuRIL)
     embedding_model_name: str = "google/muril-base-cased"
-    embedding_batch_size: int = 32
+    embedding_batch_size: int = 64   # RTX6000 Ada 48GB: doubled from 32
 
     # Gemma generation model
     t5_model_name: str = "google/gemma-3-1b-it"
@@ -61,12 +61,15 @@ class Config:
     # Sarvam generation model
     sarvam_model_name: str = "sarvamai/sarvam-1"
 
-    # Generation hyperparameters
-    generation_batch_size: int = 8
+    # Generation hyperparameters (tuned for RTX6000 Ada — 48GB VRAM, Ada Lovelace sm_89)
+    generation_batch_size: int = 8   # 48GB handles both Sarvam(14GB)+Gemma(2.5GB)+KV-cache comfortably
     max_length: int = 256
-    num_beams: int = 4
+    num_beams: int = 1               # greedy decoding — fastest; set to 4 for beam search
     temperature: float = 0.7
     top_p: float = 0.9
+
+    # Dataset sampling
+    max_samples: int = 10000   # Max triplets to process (stratified across movies); -1 = use all
 
     # Generation Checkpointing
     checkpoint_file: str = os.path.join(

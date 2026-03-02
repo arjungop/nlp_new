@@ -59,8 +59,14 @@ class MuRILEmbedder:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.config.embedding_model_name
             )
+            # RTX6000 Ada: load MuRIL in bfloat16 for faster embedding on Ada tensor cores
+            embed_dtype = (
+                torch.bfloat16 if self.device.type == "cuda"
+                else torch.float32
+            )
             self.model = AutoModel.from_pretrained(
-                self.config.embedding_model_name
+                self.config.embedding_model_name,
+                torch_dtype=embed_dtype,
             )
             self.model.to(self.device)
             self.model.eval()
