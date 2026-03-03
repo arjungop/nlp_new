@@ -9,9 +9,11 @@ Supports checkpointing for crash-safe resumability during long evaluation runs.
 import os
 import json
 import logging
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 import numpy as np
+import torch
 from tqdm import tqdm
+from bert_score import score as bert_score_fn
 
 from config import Config
 from similarity_metrics import SimilarityMetrics
@@ -104,7 +106,42 @@ class Evaluator:
                 evaluation_results = []
                 start_index = 0
 
-        # Step 4: Compute pairwise metrics with checkpointing and tqdm
+        # Step 4: Pre-compute ALL BERTScores in one batched call (avoids per-row overhead)
+        self.logger.info("Pre-computing BERTScore for all remaining rows in batch...")
+        bert_device = "cuda" if torch.cuda.is_available() else "cpu"
+        bert_f1_lookup: Dict[Tuple[int, str], float] = {}
+
+        batch_refs, batch_cands, batch_positions = [], [], []
+        for idx in range(start_index, len(enriched_triplets)):
+            row = enriched_triplets[idx]
+            positive_text = row.get("positive", "")
+            if not isinstance(positive_text, str) or not positive_text.strip():
+                continue
+            for key in generation_keys:
+                candidate_text = row.get(key, "")
+                if isinstance(candidate_text, str) and candidate_text.strip():
+                    batch_refs.append(positive_text)
+                    batch_cands.append(candidate_text)
+                    batch_positions.append((idx, key))
+
+        if batch_refs:
+            try:
+                _, _, f1_scores = bert_score_fn(
+                    cands=batch_cands,
+                    refs=batch_refs,
+                    model_type=self.config.embedding_model_name,
+                    num_layers=12,
+                    verbose=True,
+                    device=bert_device,
+                    batch_size=64,
+                )
+                for (idx, key), f1 in zip(batch_positions, f1_scores):
+                    bert_f1_lookup[(idx, key)] = float(f1.item())
+                self.logger.info("BERTScore batch computation complete for %d pairs.", len(batch_refs))
+            except Exception as e:
+                self.logger.warning("Batch BERTScore failed: %s. BERTScore will be 0.0.", str(e))
+
+        # Step 5: Compute remaining metrics per row with checkpointing and tqdm
         for index in tqdm(
             range(start_index, len(enriched_triplets)),
             desc="Evaluating Responses",
@@ -144,9 +181,7 @@ class Evaluator:
                         dice_sim = self.metrics.compute_dice_similarity(
                             positive_text, candidate_text
                         )
-                        _, _, bert_f1 = self.metrics.compute_bert_score(
-                            positive_text, candidate_text
-                        )
+                        bert_f1 = bert_f1_lookup.get((index, key), 0.0)
                     except Exception as e:
                         self.logger.warning(
                             "Error computing metrics for row %d, key %s: %s", 
