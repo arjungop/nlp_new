@@ -1,0 +1,13 @@
+Metric,Model A,Model B,t-stat,p-value,Sig (p<0.05),Winner
+Cosine Similarity,Gemma RAW,Gemma CoT,37.3983,0.0,✓,Gemma RAW
+Cosine Similarity,Gemma RAW,Sarvam RAW,403.9326,0.0,✓,Gemma RAW
+Cosine Similarity,Gemma CoT,Sarvam RAW,-23.1474,0.0,✓,Sarvam RAW
+Jaccard Similarity,Gemma RAW,Gemma CoT,-41.9024,0.0,✓,Gemma CoT
+Jaccard Similarity,Gemma RAW,Sarvam RAW,129.7449,0.0,✓,Gemma RAW
+Jaccard Similarity,Gemma CoT,Sarvam RAW,71.6567,0.0,✓,Gemma CoT
+Dice Similarity,Gemma RAW,Gemma CoT,-46.1604,0.0,✓,Gemma CoT
+Dice Similarity,Gemma RAW,Sarvam RAW,132.3608,0.0,✓,Gemma RAW
+Dice Similarity,Gemma CoT,Sarvam RAW,83.4316,0.0,✓,Gemma CoT
+BERTScore F1,Gemma RAW,Gemma CoT,30.1384,0.0,✓,Gemma RAW
+BERTScore F1,Gemma RAW,Sarvam RAW,261.8011,0.0,✓,Gemma RAW
+BERTScore F1,Gemma CoT,Sarvam RAW,-17.9132,0.0,✓,Sarvam RAW

@@ -1,0 +1,13 @@
+Metric,Model,Wins,Win Rate
+Cosine Similarity,Gemma RAW,9749,97.5%
+Cosine Similarity,Gemma CoT,235,2.4%
+Cosine Similarity,Sarvam RAW,16,0.2%
+Jaccard Similarity,Gemma RAW,4300,43.0%
+Jaccard Similarity,Gemma CoT,5696,57.0%
+Jaccard Similarity,Sarvam RAW,4,0.0%
+Dice Similarity,Gemma RAW,4300,43.0%
+Dice Similarity,Gemma CoT,5696,57.0%
+Dice Similarity,Sarvam RAW,4,0.0%
+BERTScore F1,Gemma RAW,9715,97.2%
+BERTScore F1,Gemma CoT,270,2.7%
+BERTScore F1,Sarvam RAW,15,0.1%
