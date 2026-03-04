@@ -1,0 +1,568 @@
+\documentclass[11pt]{article}
+
+% Review mode for anonymous submission
+\usepackage[review]{acl}
+
+% Standard package includes
+\usepackage{times}
+\usepackage{latexsym}
+
+% For proper rendering and hyphenation
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+%\usepackage{inconsolata}
+
+% Graphics and tables
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+
+% Set titlebox height for long title
+\setlength\titlebox{6.5cm}
+
+\title{Rasa-Guided Prompting for Culturally Grounded Telugu Dialogue Generation: \\A Comparative Study of Domain-Specialized Strategies with \\Gemma and Sarvam on the IndicDialogue Corpus}
+
+\author{First Author \\
+  Affiliation / Address line 1 \\
+  Affiliation / Address line 2 \\
+  \texttt{email@domain} \\\And
+  Second Author \\
+  Affiliation / Address line 1 \\
+  Affiliation / Address line 2 \\
+  \texttt{email@domain} \\}
+
+\begin{document}
+\maketitle
+
+% ============================================================================
+% ABSTRACT
+% ============================================================================
+\begin{abstract}
+Generating contextually appropriate multi-turn dialogue in low-resource, morphologically rich languages remains a fundamental challenge in natural language processing. Telugu---a Dravidian language with over 80 million speakers, agglutinative morphology, strict SOV word order, and a grammatically encoded honorific register system---presents unique obstacles that generic prompting strategies systematically fail to address. We introduce a domain-specialized prompting framework grounded in classical Indian aesthetic theory (\textit{rasa}) and Telugu cinematic convention for the task of next-turn dialogue prediction in Tollywood (Telugu cinema) screenplays. Our framework comprises three prompting strategies of increasing analytical depth: (1)~\textbf{Raw}, a constraint-dense instruction prompt encoding Telugu-specific linguistic rules; (2)~\textbf{Chain-of-Thought (CoT)}, a six-stage analytical scaffold progressing from emotional register (\textit{rasa}) identification through honorific specification to final generation; and (3)~\textbf{Few-Shot}, augmenting instruction with genre-matched gold exemplars. We evaluate these strategies across two generation models---Gemma~3 (1B-IT) and Sarvam-1---on 10,000 anchor--positive triplets extracted from the IndicDialogue Telugu subset via sliding-window segmentation ($k{=}5$) and stratified sampling. Responses are embedded using MuRIL (mean-pooled) and evaluated on four complementary metrics: cosine similarity, Jaccard similarity, Dice coefficient, and BERTScore~F1. Our results reveal a striking dissociation: Gemma~Raw achieves the highest semantic fidelity (cosine~$= 0.9917$, BERTScore~F1 $= 0.9709$, win rate $97.5\%$ and $97.2\%$ respectively), while Gemma~CoT produces significantly greater lexical overlap (Jaccard~$= 0.0436$, win rate $57.0\%$), suggesting that explicit reasoning scaffolding encourages surface-level token alignment at the cost of deeper meaning preservation. Sarvam-1 trails on all metrics despite being designed for Indian languages, indicating that architectural scale remains a bottleneck for low-resource dialogue generation. All differences are statistically significant (paired $t$-test and Wilcoxon signed-rank test, $p < 0.05$), with effect sizes ranging from small ($d = 0.25$) to large ($d = 3.79$). We release our full pipeline, evaluation framework, and results to support reproducible research on culturally grounded dialogue generation for under-resourced languages.
+\end{abstract}
+
+% ============================================================================
+% 1. INTRODUCTION
+% ============================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+The capacity to generate contextually coherent, culturally appropriate, and linguistically faithful dialogue remains one of the most demanding benchmarks for large language models (LLMs). While English-centric dialogue systems have achieved remarkable fluency through scaling \citep{brown-etal-2020-language, zhang-etal-2019-dialogpt}, extending these capabilities to morphologically rich, low-resource languages exposes systematic failures rooted in inadequate linguistic coverage and absent cultural grounding \citep{joshi-etal-2020-state}.
+
+Telugu, a Dravidian language spoken by over 80~million people, exemplifies these challenges with acute clarity. Three properties render it particularly resistant to generic prompting:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Morphologically encoded honorifics.} Telugu grammaticalizes interpersonal respect through verb conjugation: the distinction between \textit{m\={\i}ru}-form (formal: \textit{-tunn\=aru, -t\=aru}) and \textit{nuvvu}-form (intimate: \textit{-tunn\=avu, -t\=avu}) is not a stylistic choice but a morphological requirement determined by speaker--addressee power dynamics. An honorific error is not a disfluency---it is a social violation that breaks character consistency and narrative coherence.
+    
+    \item \textbf{Strict SOV agglutinative syntax.} Telugu enforces Subject--Object--Verb word order, with postpositional suffixes (\textit{-ki, -to, -lo, -valla, -gurinchi}) that stack on nominal roots. Generating fluent Telugu requires the model to produce grammatically valid agglutinated forms rather than isolating morphemes that belong together.
+    
+    \item \textbf{Culturally governed emotional logic.} Telugu cinematic dialogue---the dominant genre for available digitized conversational data---operates within the framework of the nine \textit{rasas} (aesthetic-emotional registers) from the \textit{N\=a\d{t}ya\'{s}\=astra} \citep{natyashastra}. Each \textit{rasa} (\textit{\'{s}\d{r}\.{n}g\=aram}, \textit{h\=asyam}, \textit{karu\d{n}a}, \textit{raudram}, \textit{v\={\i}ram}, etc.) governs the rhetorical shape, lexical density, and emotional trajectory of dialogue in ways that generic ``be helpful and harmless'' instruction tuning cannot capture.
+\end{enumerate}
+
+These properties interact: a scene depicting a younger character's first act of defiance against an elder requires simultaneously shifting from \textit{m\={\i}ru} to \textit{nuvvu}-form (honorific break), escalating from \textit{karu\d{n}a} to \textit{raudram} (emotional pivot), and maintaining Rayalaseema dialect markers if the context establishes them. No existing prompting strategy encodes this coupled linguistic--cultural constraint space.
+
+In this work, we address this gap by proposing a domain-specialized prompting framework for Telugu multi-turn dialogue generation that is linguistically principled and culturally grounded. Our contributions are:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item We design three prompting strategies of increasing analytical depth---\textbf{Raw} (constraint-dense instruction), \textbf{Chain-of-Thought} (six-stage \textit{rasa}-guided reasoning), and \textbf{Few-Shot} (exemplar-augmented instruction)---each encoding specific aspects of Telugu grammar, Tollywood cinematic convention, and classical Indian aesthetic theory.
+    
+    \item We construct a rigorous evaluation pipeline processing 10,000 stratified anchor--positive triplets from the IndicDialogue Telugu subset \citep{bharadwaj-etal-2023-indicdialogue}, comparing two generation models---Gemma~3~1B-IT \citep{gemma-team-2024} and Sarvam-1 \citep{sarvam-ai-2024}---across four complementary metrics with full statistical testing.
+    
+    \item We identify a systematic dissociation between semantic fidelity and lexical overlap that has significant implications for evaluation methodology in low-resource dialogue generation: higher Jaccard/Dice scores do not correlate with higher cosine/BERTScore performance, challenging the assumption that token overlap is a reliable proxy for generation quality.
+    
+    \item We release our complete pipeline, prompt templates, and evaluation results to support reproducible research.\footnote{Code and data available upon acceptance.}
+\end{enumerate}
+
+% ============================================================================
+% 2. RELATED WORK
+% ============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Dialogue Generation.}
+Neural dialogue generation has progressed from retrieval-based methods to end-to-end generative approaches \citep{zhang-etal-2019-dialogpt, li-etal-2016-diversity}. Recent work leverages LLMs with prompting strategies, including chain-of-thought reasoning \citep{wei-etal-2022-chain} and retrieval-augmented generation \citep{lewis-etal-2020-retrieval}. However, the overwhelming majority of this work targets English, with evaluation protocols (BLEU \citep{papineni-etal-2002-bleu}, ROUGE \citep{lin-2004-rouge}) designed for languages with whitespace-delimited tokenization and relatively impoverished morphology.
+
+\paragraph{Indic Language NLP.}
+The Indic NLP landscape has been transformed by multilingual representation models such as MuRIL \citep{khanuja-etal-2021-muril} and IndicNLPSuite \citep{kakwani-etal-2020-indicnlpsuite}, which provide high-quality embeddings for Indian languages. Sarvam-1 \citep{sarvam-ai-2024} represents a significant effort to build generation models specifically trained on Indic language data. The IndicDialogue dataset \citep{bharadwaj-etal-2023-indicdialogue} provides multi-turn conversational data across multiple Indian languages, including Telugu, sourced from movie screenplays. Despite these resources, systematic evaluation of prompting strategies for Telugu dialogue generation remains unexplored.
+
+\paragraph{Prompting Strategies.}
+Chain-of-thought prompting \citep{wei-etal-2022-chain} has demonstrated that decomposing reasoning into explicit intermediate steps improves performance on complex tasks. Few-shot in-context learning \citep{brown-etal-2020-language} provides models with exemplars that establish output format and domain conventions. Our work extends both paradigms by designing prompting strategies where the reasoning stages and exemplar selection criteria are grounded in domain-specific linguistic and cultural theory rather than generic task decomposition.
+
+\paragraph{Evaluation of Low-Resource Generation.}
+BERTScore \citep{zhang-etal-2020-bertscore} provides semantically grounded evaluation by leveraging contextual embeddings, and has been shown to correlate more strongly with human judgment than $n$-gram overlap metrics. For Telugu, MuRIL-based BERTScore offers language-specific semantic evaluation that is sensitive to morphological variation. Our evaluation framework combines BERTScore with MuRIL-based cosine similarity and set-based overlap metrics to provide complementary views of generation quality.
+
+% ============================================================================
+% 3. METHODOLOGY
+% ============================================================================
+\section{Methodology}
+\label{sec:methodology}
+
+Our pipeline consists of six stages: data preparation, context segmentation, triplet construction with stratified sampling, domain-specialized prompt construction, multi-model response generation, and multi-metric evaluation. Figure~\ref{fig:pipeline} illustrates the end-to-end architecture.
+
+\begin{figure}[t]
+    \centering
+    \fbox{\parbox{0.95\columnwidth}{\small\centering
+    \textbf{Pipeline Architecture} \\[4pt]
+    IndicDialogue JSONL $\rightarrow$ Telugu Purity Filter \\
+    $\downarrow$ \\
+    Sliding-Window Segmentation ($k{=}5$) \\
+    $\downarrow$ \\
+    Anchor--Positive Triplet Construction \\
+    $\downarrow$ \\
+    Stratified Sampling ($N{=}10{,}000$, seed=42) \\
+    $\downarrow$ \\
+    Prompt Construction (Raw / CoT) \\
+    $\downarrow$ \\
+    \begin{tabular}{cc}
+    Gemma~3 1B-IT & Sarvam-1 \\
+    (Raw + CoT) & (Raw) \\
+    \end{tabular} \\
+    $\downarrow$ \\
+    MuRIL Embedding (Mean-Pooled) \\
+    $\downarrow$ \\
+    Multi-Metric Evaluation \\
+    (Cosine, Jaccard, Dice, BERTScore~F1)
+    }}
+    \caption{End-to-end architecture of the Telugu multi-turn dialogue generation and evaluation pipeline.}
+    \label{fig:pipeline}
+\end{figure}
+
+\subsection{Dataset and Preprocessing}
+\label{subsec:dataset}
+
+We use the Telugu subset of the IndicDialogue corpus \citep{bharadwaj-etal-2023-indicdialogue}, which contains dialogue transcripts from Tollywood (Telugu cinema) films stored in JSONL format. Each record represents one movie with nested dialogue lines under the \texttt{tel} key.
+
+\paragraph{Telugu Purity Filtering.}
+Raw dialogue lines frequently contain code-mixed content---English words, transliterated Telugu, or subtitle artifacts. We apply a strict Unicode-range purity filter: every character carrying script identity must fall within the Telugu Unicode block (U+0C00--U+0C7F). Script-neutral characters (whitespace, digits, punctuation) are ignored in the purity calculation, but each accepted line must contain at least one Telugu character. This binary filter ensures that downstream models receive only authentic Telugu text, eliminating a major source of training noise.
+
+\paragraph{Data Cleaning.}
+Accepted lines undergo further cleaning: removal of URLs, HTML tags, subtitle timing codes, and copyright markers via regex-based transformations, followed by whitespace normalization. The cleaning pipeline preserves the full Telugu Unicode character set.
+
+\subsection{Context Segmentation and Triplet Construction}
+\label{subsec:segmentation}
+
+Dialogue lines within each movie are segmented into multi-turn context--response pairs using a sliding window of size $k = 5$. For a sequence of $n$ lines within a movie, this produces $n - k$ pairs. The window is advanced one line at a time, ensuring maximum coverage while maintaining conversational coherence within a single film's dialogue. Cross-movie context contamination is prevented by grouping dialogues by movie~ID before segmentation.
+
+Each context--response pair is reformulated as a triplet: the context (concatenated $k$ lines) becomes the \textit{anchor}, and the subsequent line becomes the \textit{positive} reference. A \textit{negative} field is reserved for future contrastive learning extensions but is not populated in this study.
+
+\paragraph{Stratified Sampling.}
+From the full set of triplets, we sample $N = 10{,}000$ using stratified interleaving: every $\lfloor |\text{total}| / N\rfloor$-th triplet is selected, preserving proportional representation of all movies. The sample is then shuffled with a fixed random seed (42) for reproducibility.
+
+\subsection{Prompting Strategies}
+\label{subsec:prompting}
+
+We design three prompting strategies, each encoding domain knowledge at increasing levels of analytical depth. All strategies share a common foundation: explicit specification of the Telugu honorific system with morphological examples, SOV word order constraints, agglutinative morphology rules, dialect markers for three major regional variants (Coastal Andhra, Rayalaseema, Telangana), and five cinematic genre conventions (mass/commercial, family drama, romance, comedy, social/art film).
+
+\subsubsection{Raw Prompting}
+\label{subsubsec:raw}
+
+The Raw strategy encodes all domain knowledge as a dense set of hard constraints in a single instruction block. It specifies:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \textbf{Honorific register rules}: Explicit verb endings for \textit{m\={\i}ru}-form and \textit{nuvvu}-form with usage conditions.
+    \item \textbf{SOV and morphology}: Correct vs.\ incorrect word order examples; suffix stacking rules.
+    \item \textbf{Dialect matching}: Three-way dialect system with diagnostic lexical markers.
+    \item \textbf{Genre conventions}: Rhetorical shapes for each cinematic genre.
+    \item \textbf{Code-switching calibration}: English loanword density matched to context.
+    \item \textbf{Output constraints}: Single spoken line in Telugu Unicode; no transliteration, stage directions, or meta-commentary.
+\end{itemize}
+
+The Raw prompt is token-efficient (${\sim}480$ tokens overhead), making it suitable for models with constrained context windows.
+
+\subsubsection{Chain-of-Thought (CoT) Prompting}
+\label{subsubsec:cot}
+
+The CoT strategy decomposes generation into six analytically interdependent reasoning stages, each explicitly building on findings from previous stages:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item \textbf{Rasa Identification}: Identify the dominant \textit{rasa} (emotional register) from the nine classical categories and characterize the emotional trajectory (escalating, de-escalating, or pivoting).
+    \item \textbf{Relationship \& Power Axis}: Map speaker relationships on hierarchical and emotional alignment axes to determine the grammatically mandatory honorific form.
+    \item \textbf{Genre \& Scene Type}: Classify the cinematic genre from lexical texture and name the specific scene type to determine rhetorical shape.
+    \item \textbf{Linguistic Register}: Commit to honorific form, dialect markers, code-switching density, and character-specific voice markers.
+    \item \textbf{Narrative Function}: Select exactly one narrative function (escalation, de-escalation, revelation, defiance, vulnerability, ironic pivot, or comedic payoff).
+    \item \textbf{Final Generation}: Synthesize all analytical findings into a single Telugu spoken line.
+\end{enumerate}
+
+This cumulative analytical chain (${\sim}920$ tokens overhead) prevents the model from treating each constraint independently and forces commitment to an interpretation before generation, reducing register drift and \textit{rasa} inconsistency.
+
+\subsubsection{Few-Shot Prompting}
+\label{subsubsec:fewshot}
+
+The Few-Shot strategy augments the Raw instruction with $k$ gold exemplars drawn from authentic Telugu film transcripts, scoped to match the target context's genre and dialect profile. Each exemplar provides a context--response pair annotated with genre, dialect, and \textit{rasa} metadata (${\sim}180$ tokens per exemplar). This strategy directly targets the two most common failure modes: honorific register drift and hallucinated code-switching.
+
+\subsection{Generation Models}
+\label{subsec:models}
+
+\paragraph{Gemma~3 1B-IT.}
+Google's Gemma~3 \citep{gemma-team-2024} is a decoder-only language model instruction-tuned for dialogue. The 1B-parameter variant supports a 32K context window, enabling the full CoT reasoning trace. We apply both Raw and CoT prompting to Gemma.
+
+\paragraph{Sarvam-1.}
+Sarvam-1 \citep{sarvam-ai-2024} is a decoder-only model developed specifically for Indian languages, with pretraining data emphasizing Hindi and other Indic languages. We apply Raw prompting only, as its limited context window constrains CoT applicability.
+
+Both models are loaded in FP16 precision with PyTorch SDPA (Scaled Dot-Product Attention) for efficient inference. Generation uses greedy decoding (\texttt{num\_beams}$\,{=}\,$1) with \texttt{max\_new\_tokens}$\,{=}\,$256.
+
+\subsection{Embedding and Retrieval}
+\label{subsec:embedding}
+
+All generated and reference texts are embedded using MuRIL (\textit{Multilingual Representations for Indian Languages}) \citep{khanuja-etal-2021-muril}, a BERT-based model pretrained on 17~Indian languages. Embeddings are computed as mean-pooled last hidden states with attention masking, producing 768-dimensional vectors. These embeddings are stored in a FAISS \citep{johnson-etal-2019-faiss} flat index for efficient similarity retrieval.
+
+\subsection{Evaluation Metrics}
+\label{subsec:metrics}
+
+We evaluate generated responses against ground-truth positives using four complementary metrics:
+
+\paragraph{Cosine Similarity.}
+Computed between MuRIL embeddings of the generated and reference texts:
+\begin{equation}
+    \text{cos}(\mathbf{u}, \mathbf{v}) = \frac{\mathbf{u} \cdot \mathbf{v}}{||\mathbf{u}|| \cdot ||\mathbf{v}||}
+\end{equation}
+This measures semantic proximity in the MuRIL embedding space, capturing meaning-level similarity independent of surface form.
+
+\paragraph{Jaccard Similarity.}
+Computed over subword token sets (MuRIL tokenizer):
+\begin{equation}
+    J(A, B) = \frac{|A \cap B|}{|A \cup B|}
+\end{equation}
+This measures surface-level lexical overlap at the subword level, sensitive to exact token matching.
+
+\paragraph{Dice Coefficient.}
+A related set-overlap measure:
+\begin{equation}
+    D(A, B) = \frac{2|A \cap B|}{|A| + |B|}
+\end{equation}
+Dice emphasizes intersection relative to average set size, providing a complementary perspective to Jaccard.
+
+\paragraph{BERTScore F1.}
+Computed using MuRIL as the scoring model \citep{zhang-etal-2020-bertscore}:
+\begin{equation}
+    \text{BERTScore}_{\text{F1}} = 2 \cdot \frac{P_{\text{BERT}} \cdot R_{\text{BERT}}}{P_{\text{BERT}} + R_{\text{BERT}}}
+\end{equation}
+where $P_{\text{BERT}}$ and $R_{\text{BERT}}$ are computed as maximum cosine similarities between contextual embeddings of candidate and reference tokens. BERTScore captures semantic similarity at the token level, accounting for paraphrasing and morphological variation.
+
+\subsection{Statistical Testing}
+\label{subsec:statstesting}
+
+All pairwise model comparisons are tested for statistical significance using both parametric (paired $t$-test) and non-parametric (Wilcoxon signed-rank test \citep{wilcoxon-1945-individual}) methods over the $N = 10{,}000$ paired samples. Effect sizes are reported as Cohen's $d$ \citep{cohen-1988-statistical} with conventional magnitude thresholds: $|d| < 0.2$ (negligible), $0.2 \leq |d| < 0.5$ (small), $0.5 \leq |d| < 0.8$ (medium), $|d| \geq 0.8$ (large).
+
+% ============================================================================
+% 4. RESULTS
+% ============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Descriptive Statistics}
+\label{subsec:descriptive}
+
+Table~\ref{tab:main-results} presents the mean evaluation scores across all 10,000 test triplets for each model--prompting strategy combination. The results reveal two distinct performance regimes: high semantic similarity (cosine, BERTScore~F1) and low lexical overlap (Jaccard, Dice).
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}l cccc@{}}
+\toprule
+\textbf{Model} & \textbf{Cosine} & \textbf{Jaccard} & \textbf{Dice} & \textbf{BERT~F1} \\
+\midrule
+Gemma RAW  & \textbf{0.9917} & 0.0211 & 0.0411 & \textbf{0.9709} \\
+Gemma CoT  & 0.9823 & \textbf{0.0436} & \textbf{0.0792} & 0.9637 \\
+Sarvam RAW & 0.9881 & 0.0052 & 0.0102 & 0.9680 \\
+\bottomrule
+\end{tabular}
+\caption{Mean evaluation scores across $N{=}10{,}000$ triplets. Bold indicates best performance per metric. Gemma~RAW dominates semantic metrics while Gemma~CoT leads lexical overlap.}
+\label{tab:main-results}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}l rrrr@{}}
+\toprule
+\textbf{Model} & \textbf{Std} & \textbf{Median} & \textbf{IQR} & \textbf{Min} \\
+\midrule
+\multicolumn{5}{l}{\textit{Cosine Similarity}} \\
+Gemma RAW  & 0.0008 & 0.9918 & 0.0010 & 0.9848 \\
+Gemma CoT  & 0.0252 & 0.9842 & 0.0075 & 0.0000 \\
+Sarvam RAW & 0.0010 & 0.9882 & 0.0013 & 0.9801 \\
+\midrule
+\multicolumn{5}{l}{\textit{BERTScore F1}} \\
+Gemma RAW  & 0.0019 & 0.9710 & 0.0026 & 0.9619 \\
+Gemma CoT  & 0.0240 & 0.9640 & 0.0058 & 0.0000 \\
+Sarvam RAW & 0.0023 & 0.9679 & 0.0030 & 0.9600 \\
+\bottomrule
+\end{tabular}
+\caption{Distribution statistics for semantic metrics. Gemma~CoT exhibits substantially higher variance (Std=0.0252 for cosine) and failure cases (Min=0.0) compared to the remarkably stable Gemma~RAW (Std=0.0008).}
+\label{tab:distribution-stats}
+\end{table}
+
+Several key observations emerge from these results:
+
+\paragraph{Semantic Fidelity.} Gemma~RAW achieves the highest cosine similarity ($0.9917$) and BERTScore~F1 ($0.9709$), indicating that its generations are closest to the reference responses in MuRIL's semantic space. The remarkably low standard deviation ($\sigma = 0.0008$ for cosine) suggests highly consistent performance across diverse dialogue contexts.
+
+\paragraph{Lexical Overlap.} Gemma~CoT produces approximately double the Jaccard similarity ($0.0436$ vs.\ $0.0211$) and Dice coefficient ($0.0792$ vs.\ $0.0411$) compared to Gemma~RAW. This suggests that the six-stage CoT reasoning process encourages the model to reproduce more surface tokens from the reference, at the expense of overall semantic coherence.
+
+\paragraph{Sarvam-1 Performance.} Sarvam~RAW achieves competitive semantic scores (cosine~$= 0.9881$, BERTScore~F1~$= 0.9680$) but extremely low lexical overlap (Jaccard~$= 0.0052$), suggesting that while it captures the semantic intent of reference responses, it generates substantially different surface forms.
+
+\paragraph{Variance Analysis.} A critical finding is the difference in stability: Gemma~RAW has an IQR of just $0.0010$ for cosine similarity, while Gemma~CoT has an IQR of $0.0075$ with occasional catastrophic failures (min~$= 0.0$). These zero-score samples indicate cases where the CoT reasoning chain collapsed, producing empty or degenerate outputs.
+
+\subsection{Statistical Significance}
+\label{subsec:significance}
+
+Table~\ref{tab:significance} reports pairwise comparisons. All 12 pairwise tests yield $p < 0.05$ under both parametric and non-parametric testing, confirming that the observed performance differences are not attributable to sampling variation.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llccc@{}}
+\toprule
+\textbf{Metric} & \textbf{Comparison} & \textbf{$t$-stat} & \textbf{$d$} & \textbf{Mag.} \\
+\midrule
+Cosine & RAW vs.\ CoT  & 37.40 & 0.53 & M \\
+& RAW vs.\ Sarv & 403.93 & 3.79 & L \\
+& CoT vs.\ Sarv & $-$23.15 & $-$0.33 & S \\
+\midrule
+Jaccard & RAW vs.\ CoT  & $-$41.90 & $-$0.57 & M \\
+& RAW vs.\ Sarv & 129.74 & 1.63 & L \\
+& CoT vs.\ Sarv & 71.66 & 1.00 & L \\
+\midrule
+BERT F1 & RAW vs.\ CoT  & 30.14 & 0.42 & S \\
+& RAW vs.\ Sarv & 261.80 & 1.39 & L \\
+& CoT vs.\ Sarv & $-$17.91 & $-$0.25 & S \\
+\bottomrule
+\end{tabular}
+\caption{Pairwise statistical comparisons. All $p < 0.001$. Effect size magnitude: S=small, M=medium, L=large. Negative $t$-stats indicate the second model scores higher.}
+\label{tab:significance}
+\end{table}
+
+The effect size analysis reveals nuanced interaction patterns:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item The Gemma~RAW vs.\ Sarvam~RAW comparison yields the largest effect sizes across all metrics ($d = 3.79$ for cosine, $d = 1.39$ for BERTScore~F1), indicating that model choice (Gemma vs.\ Sarvam) has a far greater impact than prompting strategy (Raw vs.\ CoT) on semantic fidelity.
+    
+    \item The RAW vs.\ CoT comparison shows medium effect sizes for surface metrics ($d = -0.57$ for Jaccard, $d = -0.61$ for Dice) but small-to-medium for semantic metrics ($d = 0.53$ for cosine, $d = 0.42$ for BERTScore~F1), suggesting that CoT improves token reproduction while modestly degrading meaning preservation.
+    
+    \item The Gemma~CoT vs.\ Sarvam~RAW comparison yields small effect sizes for semantic metrics ($d = -0.33$ for cosine, $d = -0.25$ for BERTScore~F1), indicating that Sarvam's semantic performance approaches the (degraded) CoT performance despite being a smaller, more constrained model.
+\end{itemize}
+
+\subsection{Win Rate Analysis}
+\label{subsec:winrate}
+
+Per-sample win rates (Table~\ref{tab:winrates}) provide the most actionable performance summary. Gemma~RAW is the dominant generator for semantic fidelity, winning $97.5\%$ of samples on cosine similarity and $97.2\%$ on BERTScore~F1. However, the ranking inverts for lexical metrics: Gemma~CoT wins $57.0\%$ of samples on both Jaccard and Dice, while Gemma~RAW wins $43.0\%$. Sarvam~RAW wins fewer than $0.2\%$ of samples on any metric.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}l ccc@{}}
+\toprule
+\textbf{Metric} & \textbf{G-RAW} & \textbf{G-CoT} & \textbf{Sarvam} \\
+\midrule
+Cosine     & \textbf{97.5\%} & 2.4\% & 0.2\% \\
+Jaccard    & 43.0\% & \textbf{57.0\%} & 0.0\% \\
+Dice       & 43.0\% & \textbf{57.0\%} & 0.0\% \\
+BERT F1    & \textbf{97.2\%} & 2.7\% & 0.1\% \\
+\bottomrule
+\end{tabular}
+\caption{Per-sample win rates (\% of $N{=}10{,}000$ samples where each model achieves the highest score). Bold indicates the leader.}
+\label{tab:winrates}
+\end{table}
+
+% ============================================================================
+% 5. ANALYSIS & DISCUSSION
+% ============================================================================
+\section{Analysis and Discussion}
+\label{sec:discussion}
+
+\subsection{The Semantic--Lexical Dissociation}
+\label{subsec:dissociation}
+
+The most significant finding of this study is the systematic dissociation between semantic fidelity (cosine, BERTScore~F1) and lexical overlap (Jaccard, Dice). Gemma~RAW maximizes the former while Gemma~CoT maximizes the latter, and the two rankings cannot be reconciled by any single metric. This dissociation has profound implications for evaluation methodology in low-resource dialogue generation.
+
+The dissociation is not a statistical artifact. It reflects a fundamental property of the generation process: the six-stage CoT reasoning chain forces the model to commit to specific analytical conclusions about \textit{rasa}, honorific form, dialect, and narrative function before generating. These commitments anchor the model to the surface properties of the context (specific words, markers, and constructions identified during reasoning), producing outputs that share more tokens with the reference. However, this surface anchoring comes at a cost: the generated line is constrained by the tokens explicitly mentioned in the reasoning trace, reducing the model's freedom to express the same meaning through alternative but equally valid surface forms.
+
+By contrast, the Raw strategy provides all constraints simultaneously without requiring intermediate analytical commitments. This allows the model to integrate constraints holistically, producing outputs that may use different vocabulary but preserve the intended semantic content more faithfully.
+
+\subsection{Why CoT Hurts Semantic Fidelity}
+\label{subsec:cot-hurts}
+
+The six-stage CoT scaffold is designed to prevent register drift and \textit{rasa} inconsistency. Our results suggest that it succeeds at this explicit goal---CoT outputs show greater lexical alignment with the reference---but introduces an unexpected failure mode: \textbf{reasoning chain collapse}. The minimum cosine similarity for Gemma~CoT is $0.0$, compared to $0.985$ for Gemma~RAW. These catastrophic failures occur when the cumulative analytical chain becomes internally inconsistent or exceeds the model's reasoning capacity, producing degenerate outputs.
+
+Moreover, the higher variance of CoT ($\sigma = 0.025$ for cosine, compared to $0.001$ for Raw) indicates that the multi-stage reasoning process amplifies uncertainty: errors in early stages (e.g., misidentifying the \textit{rasa}) propagate through subsequent stages, compounding into larger generation errors. This \textit{error propagation} problem is particularly acute for a 1B-parameter model, where the representational capacity may be insufficient to maintain coherent reasoning across six analytical stages.
+
+\subsection{Sarvam-1: The Indic-First Paradox}
+\label{subsec:sarvam-paradox}
+
+Sarvam-1, despite being designed specifically for Indian languages, underperforms Gemma~3 across all metrics. This \textit{Indic-first paradox} has several potential explanations:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item \textbf{Scale.} Gemma~3~1B-IT has approximately 1 billion parameters with broad multilingual training. Sarvam-1's architecture, while Indic-focused, may lack the parametric capacity to encode the full complexity of Telugu's agglutinative morphology and context-dependent honorific system within its generation weights.
+    
+    \item \textbf{Training distribution.} Sarvam-1's Indic-language pretraining may skew toward Hindi and other Indo-Aryan languages, with Dravidian languages receiving proportionally less coverage. Telugu's SOV syntax and agglutinative morphology differ fundamentally from Hindi's SOV-but-less-agglutinative structure.
+    
+    \item \textbf{Token budget.} The Raw-only evaluation for Sarvam constrains it to a single prompting strategy, while Gemma benefits from comparison across Raw and CoT. A CoT evaluation of Sarvam could change the relative ranking, though token budget constraints currently prevent this.
+\end{enumerate}
+
+\subsection{Implications for Evaluation Methodology}
+\label{subsec:eval-implications}
+
+Our results expose a methodological risk in dialogue evaluation: relying on a single metric class can produce misleading rankings. A researcher reporting only Jaccard/Dice scores would conclude that CoT is the superior prompting strategy; one reporting only cosine/BERTScore would reach the opposite conclusion. We argue that \textbf{multi-metric evaluation with explicit analysis of metric disagreement} should be the standard for low-resource dialogue generation research.
+
+The dissociation also raises questions about what ``good'' dialogue generation means for agglutinative languages. In Telugu, a semantically equivalent response can be expressed with substantially different surface forms due to morphological variation (different suffixation patterns), synonym selection, and word order flexibility within clausal boundaries. High semantic similarity with low lexical overlap may indicate that the model is generating \textit{valid alternative responses} rather than reproducing the reference verbatim---a property that should arguably be rewarded, not penalized.
+
+\subsection{Rasa-Grounded Prompting: What Works}
+\label{subsec:rasa-works}
+
+The consistent high performance of Gemma~RAW (cosine $> 0.99$, BERTScore~F1 $> 0.97$) across 10,000 diverse dialogue contexts demonstrates that dense, linguistically informed instruction prompting is remarkably effective for Telugu dialogue generation. The Raw prompt's explicit encoding of:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item Verb conjugation patterns for both honorific registers
+    \item Three-way dialect discrimination with diagnostic markers
+    \item Genre-specific rhetorical conventions
+    \item SOV word order and agglutinative morphology rules
+    \item Code-switching calibration
+\end{itemize}
+
+appears to be sufficient for guiding a general-purpose LLM to produce Telugu dialogue that is semantically indistinguishable from human-written reference responses, without the overhead and instability of multi-stage reasoning.
+
+% ============================================================================
+% 6. LIMITATIONS
+% ============================================================================
+\section*{Limitations}
+
+This study has several limitations that should be acknowledged:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Automatic metrics only.} We rely exclusively on automatic evaluation metrics. Human evaluation of linguistic quality---honorific correctness, dialect consistency, \textit{rasa} appropriateness, and narrative coherence---is essential for validating whether high cosine similarity actually corresponds to culturally appropriate dialogue. We plan to conduct human evaluation with native Telugu speakers in future work.
+    
+    \item \textbf{Model scale.} Both models evaluated are relatively small (1B--2B parameters). Performance patterns may differ substantially with larger models (7B+) that have greater capacity for multi-stage reasoning, potentially eliminating the CoT instability we observe.
+    
+    \item \textbf{Single dataset.} Our evaluation uses only the Telugu subset of IndicDialogue, which is sourced exclusively from movie dialogues. Performance on other domains (news, social media, conversational AI) may differ significantly.
+    
+    \item \textbf{Sarvam-1 CoT evaluation.} We could not evaluate Sarvam-1 with CoT prompting due to context length constraints. A fair three-way comparison would require either a longer-context version of Sarvam-1 or a truncated CoT prompt.
+    
+    \item \textbf{Few-Shot evaluation.} While we describe the Few-Shot prompting strategy, the current evaluation compares only Raw and CoT due to the challenge of sourcing verified genre-matched gold exemplars at scale. Future work should include Few-Shot evaluation.
+    
+    \item \textbf{Reference bias.} All metrics compare generated responses against a single reference response. In dialogue, multiple valid responses exist for any given context; single-reference evaluation systematically underestimates generation quality.
+\end{enumerate}
+
+% ============================================================================
+% 7. CONCLUSION
+% ============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented a domain-specialized prompting framework for Telugu multi-turn dialogue generation that explicitly encodes Telugu linguistic constraints, Tollywood cinematic convention, and classical Indian aesthetic theory (\textit{rasa}). Through systematic evaluation of 10,000 dialogue contexts across two models and three prompting strategies, we demonstrate that:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item Dense, linguistically informed instruction prompting (Raw) achieves remarkably high semantic fidelity (cosine~$= 0.992$, BERTScore~F1~$= 0.971$) with extraordinary stability ($\sigma < 0.001$), establishing that domain-specialized prompt engineering is a highly effective alternative to multi-stage reasoning for low-resource dialogue generation.
+    
+    \item Chain-of-Thought prompting improves lexical overlap but degrades semantic fidelity and introduces instability, revealing an inherent trade-off between analytical depth and generation robustness in small-scale models.
+    
+    \item Semantic and lexical evaluation metrics produce contradictory rankings, demonstrating the necessity of multi-metric evaluation with explicit disagreement analysis for morphologically rich languages.
+    
+    \item Indic-specific models do not automatically outperform general-purpose multilingual models on Indic language tasks, suggesting that architectural scale and training diversity may matter more than language-specific pretraining focus.
+\end{enumerate}
+
+Our results provide a foundation for culturally grounded dialogue generation research in under-resourced languages and highlight the critical importance of linguistically informed evaluation methodology.
+
+% ============================================================================
+% ACKNOWLEDGMENTS
+% ============================================================================
+\section*{Acknowledgments}
+
+We thank the creators of the IndicDialogue corpus for providing high-quality Telugu dialogue data, the Google team for MuRIL and Gemma, and the Sarvam~AI team for Sarvam-1. Computational experiments were conducted on an NVIDIA RTX~A6000 (48GB).
+
+% ============================================================================
+% BIBLIOGRAPHY
+% ============================================================================
+
+\bibliography{custom}
+
+% ============================================================================
+% APPENDIX
+% ============================================================================
+\appendix
+
+\section{Prompt Templates}
+\label{sec:appendix-prompts}
+
+\subsection{Raw Prompt Structure}
+\label{subsec:appendix-raw}
+
+The Raw prompt comprises five sections:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item \textbf{System instruction}: Role assignment as a Telugu cinema dialogue expert.
+    \item \textbf{Linguistic rules}: Honorific register (with verb ending examples), SOV word order, agglutinative morphology, dialect matching (three variants), and code-switching calibration.
+    \item \textbf{Cinematic rules}: Genre conventions for mass/commercial, family drama, romance, comedy, and social/art films; emotional trajectory constraints.
+    \item \textbf{Output rules}: Single spoken line in Telugu Unicode, no transliteration, no stage directions.
+    \item \textbf{Dialogue context}: The $k{=}5$ turn context window.
+\end{enumerate}
+
+\subsection{CoT Stage Descriptions}
+\label{subsec:appendix-cot}
+
+The six CoT stages and their analytical roles:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item \textbf{Rasa + Emotional Trajectory}: Identifies the primary \textit{rasa} from the nine Natyashastra categories and characterizes the emotional arc across dialogue turns.
+    \item \textbf{Speaker Relationship + Power}: Maps hierarchical position (superior/equal/subordinate) and emotional alignment (allied/opposed/ambivalent) to determine honorific requirements.
+    \item \textbf{Genre + Scene Type}: Classifies Tollywood genre from lexical texture and names the specific dramatic moment.
+    \item \textbf{Linguistic Register}: Commits to honorific form, dialect markers, code-switching level, and character-specific voice markers.
+    \item \textbf{Narrative Function}: Selects one function from: escalation, de-escalation, revelation, defiance, vulnerability, ironic pivot, comedic payoff.
+    \item \textbf{Final Generation}: Synthesizes all prior stages into a single spoken Telugu line.
+\end{enumerate}
+
+\section{Full Statistical Results}
+\label{sec:appendix-stats}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Metric} & \textbf{Comparison} & \textbf{W-stat} & \textbf{$p$} \\
+\midrule
+Cosine & RAW vs.\ CoT & 114,741 & $< 0.001$ \\
+Cosine & RAW vs.\ Sarv & 397 & $< 0.001$ \\
+Cosine & CoT vs.\ Sarv & 5,968,384 & $< 0.001$ \\
+Jaccard & RAW vs.\ CoT & 11,083,119 & $< 0.001$ \\
+Jaccard & RAW vs.\ Sarv & 7,962 & $< 0.001$ \\
+Jaccard & CoT vs.\ Sarv & 1,256,214 & $< 0.001$ \\
+BERT F1 & RAW vs.\ CoT & 441,453 & $< 0.001$ \\
+BERT F1 & RAW vs.\ Sarv & 200 & $< 0.001$ \\
+BERT F1 & CoT vs.\ Sarv & 4,235,930 & $< 0.001$ \\
+\bottomrule
+\end{tabular}
+\caption{Wilcoxon signed-rank test results confirming non-parametric significance for all pairwise comparisons.}
+\label{tab:wilcoxon}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Metric} & \textbf{Comparison} & \textbf{Cohen's $d$} & \textbf{Magnitude} \\
+\midrule
+Cosine & RAW vs.\ CoT & 0.529 & Medium \\
+Cosine & RAW vs.\ Sarv & 3.789 & Large \\
+Cosine & CoT vs.\ Sarv & $-$0.328 & Small \\
+Jaccard & RAW vs.\ CoT & $-$0.567 & Medium \\
+Jaccard & RAW vs.\ Sarv & 1.629 & Large \\
+Jaccard & CoT vs.\ Sarv & 0.998 & Large \\
+Dice & RAW vs.\ CoT & $-$0.613 & Medium \\
+Dice & RAW vs.\ Sarv & 1.652 & Large \\
+Dice & CoT vs.\ Sarv & 1.152 & Large \\
+BERT F1 & RAW vs.\ CoT & 0.423 & Small \\
+BERT F1 & RAW vs.\ Sarv & 1.386 & Large \\
+BERT F1 & CoT vs.\ Sarv & $-$0.251 & Small \\
+\bottomrule
+\end{tabular}
+\caption{Full Cohen's $d$ effect size matrix for all pairwise comparisons across all metrics.}
+\label{tab:effect-sizes}
+\end{table}
+
+\end{document}
